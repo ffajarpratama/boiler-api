@@ -2,23 +2,22 @@ package usecase
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/ffajarpratama/boiler-api/internal/http/request"
 	"github.com/ffajarpratama/boiler-api/internal/model"
-	"github.com/ffajarpratama/boiler-api/pkg/hash"
-	"github.com/ffajarpratama/boiler-api/pkg/jwt"
+	"github.com/ffajarpratama/boiler-api/internal/repository"
+	"github.com/ffajarpratama/boiler-api/lib/custom_error"
+	"github.com/ffajarpratama/boiler-api/lib/hash"
+	"github.com/ffajarpratama/boiler-api/lib/jwt"
 	"github.com/google/uuid"
 )
 
-// TODO: do properly
-// RegisterUser implements IFaceUsecase.
-func (u *Usecase) RegisterUser(ctx context.Context, req *request.ReqRegisterUser) error {
-	tx := u.DB.Begin()
-	defer tx.Rollback()
-
+// Register implements IFaceUsecase.
+func (u *Usecase) Register(ctx context.Context, req *request.Register) (*model.User, error) {
 	pwd, err := hash.HashAndSalt([]byte(req.Password))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	user := &model.User{
@@ -27,45 +26,52 @@ func (u *Usecase) RegisterUser(ctx context.Context, req *request.ReqRegisterUser
 		Password: pwd,
 	}
 
-	err = u.Repo.CreateUser(ctx, user, tx)
+	err = u.repo.CreateUser(ctx, user, u.db)
 	if err != nil {
-		return err
+		if repository.IsDuplicateErr(err) {
+			err = custom_error.SetCustomError(&custom_error.ErrorContext{
+				HTTPCode: http.StatusConflict,
+				Message:  "email sudah digunakan",
+			})
+
+			return nil, err
+		}
+
+		return nil, err
 	}
 
-	return tx.Commit().Error
+	claims := &jwt.CustomClaims{
+		UserID: user.UserID.String(),
+	}
+
+	user.AccessToken, err = jwt.GenerateToken(claims, u.cnf.JWT.Secret)
+	if err != nil {
+		return nil, err
+	}
+
+	return user, nil
 }
 
 // Login implements IFaceUsecase.
-func (u *Usecase) Login(ctx context.Context, req *request.ReqLoginUser) (*model.User, error) {
-	res, err := u.Repo.FindOneUser(ctx, "email = ?", req.Email)
+func (u *Usecase) Login(ctx context.Context, req *request.Login) (*model.User, error) {
+	user, err := u.repo.FindOneUser(ctx, "email = ?", req.Email)
 	if err != nil {
 		return nil, err
 	}
 
-	err = hash.Compare(res.Password, []byte(req.Password))
+	claims := &jwt.CustomClaims{
+		UserID: user.UserID.String(),
+	}
+
+	user.AccessToken, err = jwt.GenerateToken(claims, u.cnf.JWT.Secret)
 	if err != nil {
 		return nil, err
 	}
 
-	claims := &jwt.CustomUserClaims{
-		ID:   res.UserID.String(),
-		Role: "",
-	}
-
-	res.Token, err = jwt.GenerateToken(claims, u.Cnf.JWTConfig.User)
-	if err != nil {
-		return nil, err
-	}
-
-	return res, nil
+	return user, nil
 }
 
-// GetUserProfile implements IFaceUsecase.
-func (u *Usecase) GetUserProfile(ctx context.Context, userID uuid.UUID) (*model.User, error) {
-	res, err := u.Repo.FindOneUser(ctx, "user_id = ?", userID)
-	if err != nil {
-		return nil, err
-	}
-
-	return res, nil
+// GetProfile implements IFaceUsecase.
+func (u *Usecase) GetProfile(ctx context.Context, userID uuid.UUID) (*model.User, error) {
+	return u.repo.FindOneUser(ctx, "user_id = ?", userID)
 }

@@ -7,8 +7,7 @@ import (
 )
 
 func main() {
-	err := app.Exec()
-	if err != nil {
-		log.Fatalf("[app-run-failed] \n%v\n", err)
+	if err := app.Exec(); err != nil {
+		log.Fatal("[app-failed]", err)
 	}
 }

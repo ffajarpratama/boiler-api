@@ -1,12 +1,12 @@
 package request
 
-type ReqRegisterUser struct {
+type Register struct {
 	Name     string `json:"name" validate:"required"`
-	Email    string `json:"email" validate:"required"`
+	Email    string `json:"email" validate:"required,email"`
 	Password string `json:"password" validate:"required"`
 }
 
-type ReqLoginUser struct {
-	Email    string `json:"email" validate:"required"`
+type Login struct {
+	Email    string `json:"email" validate:"required,email"`
 	Password string `json:"password" validate:"required"`
 }

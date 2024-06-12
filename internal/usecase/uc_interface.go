@@ -9,11 +9,8 @@ import (
 )
 
 type IFaceUsecase interface {
-	// example
-	Ping(ctx context.Context) (string, error)
-
 	// auth
-	RegisterUser(ctx context.Context, req *request.ReqRegisterUser) error
-	Login(ctx context.Context, req *request.ReqLoginUser) (*model.User, error)
-	GetUserProfile(ctx context.Context, userID uuid.UUID) (*model.User, error)
+	Register(ctx context.Context, req *request.Register) (*model.User, error)
+	Login(ctx context.Context, req *request.Login) (*model.User, error)
+	GetProfile(ctx context.Context, userID uuid.UUID) (*model.User, error)
 }

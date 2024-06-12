@@ -11,9 +11,9 @@ type Repository struct {
 	mongo *mongo.Database
 }
 
-func New(db *gorm.DB, mongoDb *mongo.Database) IFaceRepository {
+func New(db *gorm.DB, mongo *mongo.Database) IFaceRepository {
 	return &Repository{
 		db:    db,
-		mongo: mongoDb,
+		mongo: mongo,
 	}
 }

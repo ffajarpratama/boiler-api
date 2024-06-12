@@ -1,71 +1,82 @@
 package app
 
 import (
+	"context"
 	"flag"
 	"fmt"
-	"math/rand"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/ffajarpratama/boiler-api/config"
+	"github.com/ffajarpratama/boiler-api/internal/http/handler"
 	"github.com/ffajarpratama/boiler-api/internal/repository"
-	http_transport "github.com/ffajarpratama/boiler-api/internal/transport/http"
 	"github.com/ffajarpratama/boiler-api/internal/usecase"
-	"github.com/ffajarpratama/boiler-api/pkg/aws"
-	"github.com/ffajarpratama/boiler-api/pkg/google"
-	custom_http "github.com/ffajarpratama/boiler-api/pkg/http"
-	"github.com/ffajarpratama/boiler-api/pkg/mongodb"
-	"github.com/ffajarpratama/boiler-api/pkg/postgres"
-	"github.com/ffajarpratama/boiler-api/pkg/redis"
-	"github.com/ffajarpratama/boiler-api/pkg/util"
+	"github.com/ffajarpratama/boiler-api/lib/mongo"
+	"github.com/ffajarpratama/boiler-api/lib/postgres"
 )
 
-func Exec() (err error) {
+func Exec() error {
 	cnf := config.New()
-	rand.New(rand.NewSource(time.Now().UnixNano()))
-	util.SetTimeZone("UTC")
 
-	dbClient, err := postgres.NewDBClient(cnf)
+	pgClient, err := postgres.NewPostgresClient(cnf)
 	if err != nil {
 		return err
 	}
 
-	mongoDb, err := mongodb.NewMongoDBClient(cnf)
+	mongoClient, err := mongo.NewMongoClient(cnf)
 	if err != nil {
 		return err
 	}
 
-	redisClient, err := redis.NewRedisClient(cnf)
-	if err != nil {
-		return err
-	}
-
-	aws, err := aws.NewAWSClient(cnf.AWSConfig)
-	if err != nil {
-		return err
-	}
-
-	fcm, err := google.NewFCMClient(cnf.Firebase)
-	if err != nil {
-		return err
-	}
-
-	repo := repository.New(dbClient, mongoDb)
-	uc := usecase.New(&usecase.Usecase{
-		Cnf:   cnf,
-		Repo:  repo,
-		DB:    dbClient,
-		Redis: redisClient,
-		AWS:   aws,
-		FCM:   fcm,
-	})
+	repo := repository.New(pgClient, mongoClient)
+	uc := usecase.New(cnf, repo, pgClient)
+	r := handler.NewHTTPRouter(cnf, uc)
 
 	addr := flag.String("http", fmt.Sprintf(":%d", cnf.App.Port), "HTTP listen address")
-	handler := http_transport.NewHTTPHandler(cnf, uc, redisClient)
+	httpServer := &http.Server{
+		Addr:              *addr,
+		Handler:           r,
+		ReadHeaderTimeout: 90 * time.Second,
+	}
 
-	err = custom_http.NewHTTPServer(*addr, handler, cnf)
-	if err != nil {
+	serverCtx, serverStopCtx := context.WithCancel(context.Background())
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+
+	go func() {
+		<-sig
+
+		shutdownCtx, cancel := context.WithTimeout(serverCtx, 30*time.Second)
+		go func() {
+			<-shutdownCtx.Done()
+			if shutdownCtx.Err() == context.DeadlineExceeded {
+				log.Printf("[graceful-shutdown-time-out] \n%v\n", err.Error())
+			}
+		}()
+
+		defer cancel()
+
+		log.Println("graceful shutdown.....")
+
+		err = httpServer.Shutdown(shutdownCtx)
+		if err != nil {
+			log.Printf("[graceful-shutdown-error] \n%v\n", err.Error())
+		}
+
+		serverStopCtx()
+	}()
+
+	err = httpServer.ListenAndServe()
+	if err != nil && err != http.ErrServerClosed {
+		log.Printf("[http-server-failed] \n%v\n", err.Error())
 		return err
 	}
 
-	return
+	<-serverCtx.Done()
+
+	return nil
 }
